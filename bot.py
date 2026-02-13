@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -25,13 +25,15 @@ client_to_thread = {}
 # Состояния FSM для диалога
 class ClientStates(StatesGroup):
     waiting_for_estimate = State()  # Ждём смету
+    waiting_for_price = State()     # Ждём цену от менеджера (новое)
     waiting_for_decision = State()  # Ждём да/нет
-    waiting_for_contact = State()  # Ждём контакты
+    waiting_for_contact = State()   # Ждём контакты
     waiting_for_feedback = State()  # Ждём отзыв
 
 # Команда /start
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
+    logging.info(f"Start command from user {message.from_user.id}")
     await message.answer(
         'Привет! Отправьте ссылку на смету из Petrovich '
         '<a href="https://petrovich.ru/cabinet/estimate/..."> (пример)</a> '
@@ -45,9 +47,11 @@ async def start_handler(message: Message, state: FSMContext):
 async def client_message_handler(message: Message, state: FSMContext):
     client_id = message.from_user.id
     current_state = await state.get_state()
+    logging.info(f"Received client message from {client_id}, type: {message.content_type}, state: {current_state}, text: {message.text}, has_photo: {bool(message.photo)}, has_document: {bool(message.document)}")
 
     # Создаём тему, если нет
     if client_id not in client_to_thread:
+        logging.info(f"Creating new thread for client {client_id}")
         thread = await bot.create_forum_topic(
             chat_id=MANAGER_GROUP_ID,
             name=f"Клиент {client_id} ({message.from_user.username or 'аноним'})"
@@ -63,18 +67,34 @@ async def client_message_handler(message: Message, state: FSMContext):
 
     # Шаг 1: Ждём смету
     if current_state == ClientStates.waiting_for_estimate:
-        if message.text and 'petrovich.ru/cabinet/estimate/' in message.text:
+        processed = False
+        if message.text and ('petrovich.ru/cabinet/estimate/' in message.text or 'estimate' in message.text.lower() or 'smeta' in message.text.lower()):
+            logging.info(f"Processing text link: {message.text}")
             await bot.send_message(MANAGER_GROUP_ID, thread_id, f"Ссылка от клиента: {message.text}")
+            processed = True
         elif message.photo:
-            await bot.send_photo(MANAGER_GROUP_ID, thread_id, message.photo[-1].file_id, caption="Фото сметы от клиента")
+            logging.info("Processing photo")
+            caption = message.caption or "Фото сметы от клиента"
+            await bot.send_photo(MANAGER_GROUP_ID, thread_id, message.photo[-1].file_id, caption=caption)
+            processed = True
         elif message.document:
-            await bot.send_document(MANAGER_GROUP_ID, thread_id, message.document.file_id, caption="Файл сметы от клиента")
+            logging.info("Processing document")
+            caption = message.caption or "Файл сметы от клиента"
+            await bot.send_document(MANAGER_GROUP_ID, thread_id, message.document.file_id, caption=caption)
+            processed = True
         else:
+            logging.info("Invalid input, sending error message")
             await message.answer("Пожалуйста, отправьте ссылку или фото/файл.")
             return
-        await message.answer("Данные переданы. Ожидайте цену от менеджера.")
-        await bot.send_message(MANAGER_GROUP_ID, thread_id, "Рассчитайте и отправьте цену (ответьте в этой теме).")
-        # Состояние не меняем — цена придёт от менеджера
+
+        if processed:
+            await message.answer("Данные переданы. Ожидайте цену от менеджера.")
+            await bot.send_message(MANAGER_GROUP_ID, thread_id, "Рассчитайте и отправьте цену (ответьте в этой теме).")
+            await state.set_state(ClientStates.waiting_for_price)  # Меняем состояние
+
+    # Новое: Ожидание цены
+    elif current_state == ClientStates.waiting_for_price:
+        await message.answer("Ожидайте предложения цены от менеджера. Если нужно добавить данные, напишите.")
 
     # Шаг 3: Да/нет после цены
     elif current_state == ClientStates.waiting_for_decision:
@@ -111,18 +131,24 @@ async def manager_message_handler(message: Message, state: FSMContext):
     if not client_id:
         return
 
+    logging.info(f"Manager message in thread {thread_id}: {message.text}")
+
     # Пересылка менеджеру → клиенту
     await bot.send_message(client_id, message.text)
 
     # Если это цена — просим да/нет и меняем состояние
     if 'цена' in message.text.lower() or any(c in message.text for c in ['руб', '₽', '$']):
-        await bot.send_message(client_id, "Устраивает? (да/нет)")
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Да"), KeyboardButton(text="Нет")]],
+            resize_keyboard=True, one_time_keyboard=True
+        )
+        await bot.send_message(client_id, "Устраивает? (да/нет)", reply_markup=keyboard)
         client_state = FSMContext(storage=dp.storage, key=types.StorageKey(bot_id=bot.id, chat_id=client_id, user_id=client_id))
         await client_state.set_state(ClientStates.waiting_for_decision)
 
 async def main():
     logging.info("Бот запущен")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, allowed_updates=["message", "channel_post", "edited_message", "edited_channel_post"])
 
 if __name__ == '__main__':
     asyncio.run(main())
