@@ -101,8 +101,10 @@ async def start_handler(message: Message, state: FSMContext):
     await create_new_thread_for_client(message)
 
     await message.answer(
-        "Чат создан. Отправьте смету (ссылка из Петровича / фото / файл). "
-        "Дальше можно общаться свободно — я буду передавать сообщения менеджерам."
+        'Привет! Отправьте ссылку на смету из Petrovich '
+        '<a href="https://petrovich.ru/cabinet/estimate/..."> (пример)</a> '
+        'или прикрепите фото/файл.',
+        parse_mode='HTML'
     )
     await state.set_state(ClientStates.waiting_for_estimate)
 
