@@ -32,7 +32,12 @@ class ClientStates(StatesGroup):
 # Команда /start
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
-    await message.answer("Привет! Отправьте ссылку на смету из Petrovich<a href="https://petrovich.ru/cabinet/estimate/..." target="_blank" rel="noopener noreferrer nofollow"></a> или прикрепите фото/файл.")
+    await message.answer(
+        'Привет! Отправьте ссылку на смету из Petrovich '
+        '<a href="https://petrovich.ru/cabinet/estimate/..."> (пример)</a> '
+        'или прикрепите фото/файл.',
+        parse_mode='HTML'
+    )
     await state.set_state(ClientStates.waiting_for_estimate)
 
 # Обработка сообщений от клиентов (в личке)
