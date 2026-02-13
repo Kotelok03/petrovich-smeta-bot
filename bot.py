@@ -197,4 +197,29 @@ async def manager_message_handler(message: Message):
         await bot.send_message(
             chat_id=client_id,
             text="Устраивает? (Да/Нет)",
-            reply_markup=ke_
+            reply_markup=keyboard,
+        )
+
+        # Set client's FSM state to waiting_for_decision
+        if BOT_ID is None:
+            return
+
+        client_state = FSMContext(
+            storage=dp.storage,
+            key=StorageKey(bot_id=BOT_ID, chat_id=client_id, user_id=client_id),
+        )
+        await client_state.set_state(ClientStates.waiting_for_decision)
+
+
+async def main():
+    global BOT_ID
+    me = await bot.get_me()
+    BOT_ID = me.id
+
+    logging.info("Bot started")
+    # allowed_updates should include update types, not message content types
+    await dp.start_polling(bot, allowed_updates=["message"])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
